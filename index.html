@@ -1872,8 +1872,8 @@
       </div>
       <div class="modal-footer">
         <button class="modal-btn secondary" onclick="closeCopyInfoOverlay()">Đóng</button>
-        <button class="modal-btn primary" style="background:#0068ff;"
-          onclick="closeCopyInfoOverlay(); shareParcelInfoZalo();">💬 Gửi qua Zalo 0914869091</button>
+        <button id="copyInfoBtn" class="modal-btn primary" style="background:#0068ff;"
+          onclick="copyInfoFromOverlay()">📋 Copy thông tin</button>
       </div>
     </div>
   </div>
@@ -3760,6 +3760,27 @@
     }
     function closeCopyInfoOverlay() {
       document.getElementById('copyInfoOverlay').classList.remove('show');
+    }
+
+    // Nút "Copy thông tin" trong hộp thoại: copy lại chuỗi "Tờ: a, Thửa: b" (phòng
+    // khi lần copy tự động lúc mở hộp thoại bị trình duyệt chặn), báo kết quả
+    // ngay trên nút rồi tự đóng hộp thoại.
+    async function copyInfoFromOverlay() {
+      const text = document.getElementById('copyInfoText').textContent || '';
+      if (!text) return;
+      const btn = document.getElementById('copyInfoBtn');
+      let ok = false;
+      try { ok = await copyTextToClipboard(text); } catch (e) { ok = false; }
+      if (ok) {
+        document.getElementById('copyInfoTitle').textContent = '📋 Đã copy thông tin thửa';
+        btn.textContent = '✓ Đã copy';
+        showStatus('✓ Đã copy: ' + text);
+        setTimeout(() => { closeCopyInfoOverlay(); btn.textContent = '📋 Copy thông tin'; }, 900);
+      } else {
+        document.getElementById('copyInfoTitle').textContent = '📋 Nhấn giữ dòng dưới để copy';
+        btn.textContent = '⚠️ Chưa copy được';
+        setTimeout(() => { btn.textContent = '📋 Copy thông tin'; }, 1800);
+      }
     }
 
     async function copyParcelInfo() {
