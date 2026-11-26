@@ -6,6 +6,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>TDMAP.PRO.VN.EAKNUEC</title>
   <!-- 121026v1  -->
+  <!-- PHIÊN BẢN TRANG: MỖI LẦN SỬA index.html RỒI ĐƯA LÊN GITHUB PHẢI ĐỔI SỐ NÀY
+       (vd 2026.11.26-1 -> 2026.11.26-2), máy người dùng thấy khác số sẽ tự tải bản mới. -->
+  <meta name="app-version" content="2026.11.26-1">
 
   <!-- ICON HIỂN THỊ TRÊN TAB TRÌNH DUYỆT + KHI TẠO PHÍM TẮT NGOÀI MÀN HÌNH ĐIỆN THOẠI  -->
   <!-- Đặt file app-icon.ico cùng thư mục với index.html (và manifest.json) trên server  -->
@@ -5102,6 +5105,109 @@ body.hide-lbl-bg .lbl-style {
     startMapFromSplash();
     // Tự định vị và zoom tới vị trí đang đứng ngay khi mở trang.
     locateMe({ auto: true });
+
+    // ── KIỂM TRA PHIÊN BẢN + TỰ ĐỘNG CẬP NHẬT BẢN MỚI ─────────────────────────────
+    // So sánh <meta name="app-version"> của trang đang chạy với bản trên server
+    // (tải lại index.html, bỏ qua bộ nhớ đệm). Khác nhau -> tải lại trang bằng URL
+    // có ?v=<phiên bản mới> để trình duyệt / CDN GitHub Pages không trả bản cũ.
+    // Kiểm tra lúc: mở trang, mỗi 10 phút, và khi quay lại app từ nền (điện thoại).
+    // - Lúc mở trang: tải lại ngay (người dùng chưa thao tác gì).
+    // - Lúc đang dùng: hiện thanh báo, tự cập nhật sau vài giây; nếu đang gõ chữ
+    //   vào ô nhập liệu thì KHÔNG tự tải lại (tránh mất nội dung), chỉ hiện nút.
+    const APP_VERSION = (document.querySelector('meta[name="app-version"]') || {}).content || '';
+    const UPD_TRY_KEY = 'tdmap_upd_to';
+    let lastVersionCheckAt = 0;
+    let dismissedVersion = null;
+
+    async function fetchServerVersion() {
+      const url = new URL(location.href);
+      url.hash = '';
+      url.searchParams.set('_vc', Date.now());
+      const res = await fetch(url.toString(), { cache: 'no-store' });
+      if (!res.ok) return null;
+      const html = await res.text();
+      const m = html.match(/<meta\s+name=["']app-version["']\s+content=["']([^"']+)["']/i);
+      return m ? m[1].trim() : null;
+    }
+
+    function reloadToVersion(ver) {
+      try { sessionStorage.setItem(UPD_TRY_KEY, ver); } catch (e) { /* bỏ qua */ }
+      const url = new URL(location.href);
+      url.searchParams.delete('_vc');
+      url.searchParams.set('v', ver);
+      location.replace(url.toString());
+    }
+
+    function isUserTyping() {
+      const a = document.activeElement;
+      return !!a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable);
+    }
+
+    function showUpdateBanner(ver, autoSec) {
+      let bar = document.getElementById('appUpdateBar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'appUpdateBar';
+        bar.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:100000;' +
+          'background:#0b6b5a;color:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.35);' +
+          'padding:8px 10px;font:600 13px/1.35 system-ui,sans-serif;display:flex;gap:8px;align-items:center;' +
+          'max-width:calc(100vw - 20px);flex-wrap:wrap;justify-content:center;';
+        document.body.appendChild(bar);
+      }
+      bar.innerHTML = '<span id="appUpdateMsg"></span>' +
+        '<button id="appUpdateNow" style="border:0;border-radius:6px;padding:5px 10px;background:#ffd600;color:#222;font-weight:700;cursor:pointer">Cập nhật ngay</button>' +
+        '<button id="appUpdateLater" style="border:0;border-radius:6px;padding:5px 10px;background:rgba(255,255,255,.2);color:#fff;cursor:pointer">Để sau</button>';
+      const msgEl = bar.querySelector('#appUpdateMsg');
+      let left = autoSec;
+      let timer = null;
+      const render = () => {
+        msgEl.textContent = left > 0
+          ? `🔄 Có phiên bản mới (${ver}) · tự cập nhật sau ${left}s`
+          : `🔄 Có phiên bản mới (${ver})`;
+      };
+      render();
+      bar.querySelector('#appUpdateNow').onclick = () => reloadToVersion(ver);
+      bar.querySelector('#appUpdateLater').onclick = () => {
+        clearInterval(timer);
+        dismissedVersion = ver;
+        bar.remove();
+      };
+      if (left > 0) {
+        timer = setInterval(() => {
+          if (isUserTyping()) { clearInterval(timer); left = 0; render(); return; }
+          left--;
+          if (left <= 0) { clearInterval(timer); reloadToVersion(ver); return; }
+          render();
+        }, 1000);
+      }
+    }
+
+    async function checkForUpdate(isStartup) {
+      if (!APP_VERSION || location.protocol === 'file:') return;
+      lastVersionCheckAt = Date.now();
+      let ver;
+      try { ver = await fetchServerVersion(); } catch (e) { return; } // mất mạng -> bỏ qua
+      let tried = null;
+      try { tried = sessionStorage.getItem(UPD_TRY_KEY); } catch (e) { /* bỏ qua */ }
+      if (!ver || ver === APP_VERSION) {
+        if (tried && tried === APP_VERSION) showStatus(`✅ Đã cập nhật phiên bản ${APP_VERSION}`);
+        try { sessionStorage.removeItem(UPD_TRY_KEY); } catch (e) { /* bỏ qua */ }
+        return;
+      }
+      if (ver === dismissedVersion || document.getElementById('appUpdateBar')) return;
+      // Đã tải lại 1 lần để lên bản này mà vẫn nhận bản cũ (CDN chưa kịp làm mới)
+      // -> không tự tải lại nữa để tránh lặp vô hạn, chỉ hiện nút cho người dùng bấm.
+      if (tried === ver) { showUpdateBanner(ver, 0); return; }
+      if (isStartup && !isUserTyping()) { reloadToVersion(ver); return; }
+      showUpdateBanner(ver, isUserTyping() ? 0 : 8);
+    }
+
+    console.log('TDMAP phiên bản', APP_VERSION);
+    checkForUpdate(true);
+    setInterval(() => checkForUpdate(false), 10 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastVersionCheckAt > 60 * 1000) checkForUpdate(false);
+    });
   </script>
 </body>
 
