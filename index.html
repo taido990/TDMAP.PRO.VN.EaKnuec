@@ -2221,11 +2221,23 @@
     // ── 📍 "Vị trí của tôi" — định vị 1 lần, đứng yên tại chỗ ──────────────────────
     // Bấm lần 1: xác định vị trí hiện tại rồi hiển thị chấm trên bản đồ (đứng yên,
     // không tự cập nhật liên tục). Bấm lần nữa (khi đang hiển thị): tắt đi.
-    function locateMe() {
+    // Bounds tổng thể của dữ liệu thửa đã tải (gán trong renderParcels) - dùng để
+    // biết vị trí người dùng có nằm trong khu vực bản đồ hay không.
+    let dataBounds = null;
+    function isInsideDataArea(lat, lon) {
+      if (!dataBounds || !dataBounds.isValid()) return true; // chưa tải dữ liệu -> coi như trong
+      return dataBounds.pad(0.2).contains([lat, lon]);
+    }
+
+    // opts.auto = true: gọi tự động khi mở trang (không bật/tắt, lỗi thì báo nhẹ,
+    // vị trí ở ngoài khu vực bản đồ thì chỉ đặt chấm, không kéo bản đồ đi).
+    function locateMe(opts) {
+      const auto = !!(opts && opts.auto);
       if (!navigator.geolocation) {
-        showStatus('Trình duyệt không hỗ trợ định vị');
+        if (!auto) showStatus('Trình duyệt không hỗ trợ định vị');
         return;
       }
+      if (auto && (staticLocateActive || locateWatchId !== null)) return;
       // Đang ở chế độ "định vị khi di chuyển" -> tắt trước để tránh 2 chế độ chạy
       // song song (một cái đứng yên, một cái liên tục di chuyển bản đồ).
       if (locateWatchId !== null) stopNavMode();
@@ -2268,20 +2280,25 @@
           map.invalidateSize();
           const lat = pos.coords.latitude, lon = pos.coords.longitude, acc = pos.coords.accuracy;
           placeLocateMarker(lat, lon, acc);
-          const curZoom = map.getZoom();
-          if (curZoom < 17) map.flyTo([lat, lon], 17, { animate: true, duration: 1.2 });
-          else map.panTo([lat, lon], { animate: true, duration: 0.6 });
-
           staticLocateActive = true;
           btn.classList.remove('locating');
           btn.classList.add('located');
           btn.textContent = '🔵';
+
+          if (auto && !isInsideDataArea(lat, lon)) {
+            showStatus('Vị trí của bạn nằm ngoài khu vực bản đồ');
+            return;
+          }
+          const curZoom = map.getZoom();
+          if (curZoom < 17) map.flyTo([lat, lon], 17, { animate: true, duration: 1.2 });
+          else map.panTo([lat, lon], { animate: true, duration: 0.6 });
           showStatus(`Vị trí của bạn · độ chính xác ±${Math.round(acc)}m`);
         },
         err => {
           const msgs = { 1: 'Bị từ chối quyền định vị', 2: 'Không xác định được vị trí', 3: 'Hết thời gian chờ' };
-          showStatus(msgs[err.code] || 'Lỗi định vị');
+          if (!auto) showStatus(msgs[err.code] || 'Lỗi định vị');
           btn.classList.remove('locating');
+          btn.textContent = '📍';
         },
         { enableHighAccuracy: true, timeout: 12000, maximumAge: 5000 }
       );
@@ -3221,8 +3238,10 @@
         openPopup(p);
       });
 
-      // Nhãn trên bản đồ: chỉ hiển thị Tờ-Thửa, KHÔNG hiển thị Tên chủ (bản dành cho người dân).
-      const lblHtml = escapeHtml(p.id);
+      // Nhãn trên bản đồ: dòng 1 = Tờ-Thửa, dòng 2 = Tên chủ (nếu có).
+      const tenChuLbl = (p.tenChu || '').trim();
+      const lblHtml = escapeHtml(p.id) +
+        (tenChuLbl ? `<span class="lbl-owner">${escapeHtml(tenChuLbl)}</span>` : '');
       p._lbl = L.tooltip({
         permanent: true, direction: 'center',
         className: 'lbl-style', offset: [0, 0]
@@ -3417,7 +3436,15 @@
       // nhanh hơn rõ rệt.
       const bounds = buildSpatialIndex(list);
 
-      if (bounds && bounds.isValid()) map.fitBounds(bounds, { padding: [60, 60], maxZoom: 17 });
+      dataBounds = (bounds && bounds.isValid()) ? bounds : null;
+      // Đã có vị trí người dùng (tự định vị lúc mở trang / bấm 📍 / 🧭) và vị trí
+      // nằm trong khu vực bản đồ -> giữ bản đồ tại vị trí đó thay vì thu về toàn xã.
+      const myLL = locateMarker ? locateMarker.getLatLng() : null;
+      if (myLL && isInsideDataArea(myLL.lat, myLL.lng)) {
+        map.setView(myLL, Math.max(map.getZoom(), 17), { animate: false });
+      } else if (dataBounds) {
+        map.fitBounds(dataBounds, { padding: [60, 60], maxZoom: 17 });
+      }
 
       // Chỉ vẽ các thửa trong khung nhìn (+ vùng đệm) hiện tại, theo từng lô nhỏ
       // để không treo giao diện. Các thửa còn lại sẽ tự động được vẽ/gỡ khi
@@ -5073,6 +5100,8 @@ body.hide-lbl-bg .lbl-style {
     // dẫn giấy tờ đăng ký đất đai + tự tải bản đồ Google Drive song song phía sau,
     // không cần người dân bấm vào biểu tượng nào nữa.
     startMapFromSplash();
+    // Tự định vị và zoom tới vị trí đang đứng ngay khi mở trang.
+    locateMe({ auto: true });
   </script>
 </body>
 
